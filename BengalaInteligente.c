@@ -67,8 +67,6 @@ void init_hardware(void)
   gpio_set_dir(BTN_JOY, GPIO_IN); // Define como entrada
   gpio_pull_up(BTN_JOY);          // Habilita pull-up interno
 
-  // configura o buzzer
-
   // configura botao A na GPIO 5 com pull-up e interrupção na borda de descida
   gpio_init(5);
   gpio_set_dir(5, GPIO_IN);
@@ -79,7 +77,7 @@ void init_hardware(void)
   gpio_set_dir(6, GPIO_IN);
   gpio_pull_up(6);
 
-  // inicializando pwm para led e buzzer
+  // inicializando pwm para led
   pwm_init_gpio(LED_R);
 
   // I2C Initialisation. Using it at 400Khz.
@@ -138,12 +136,6 @@ void pwm_init_gpio(uint pin)
   uint slice = pwm_gpio_to_slice_num(pin); // Obtém o slice PWM correspondente
   pwm_set_wrap(slice, 4095);               // Define o valor máximo do PWM
   pwm_set_enabled(slice, true);            // Habilita o PWM
-}
-
-void desativar_buzzer()
-{
-  uint slice_num = pwm_gpio_to_slice_num(BUZZER_A);
-  pwm_set_enabled(slice_num, false); // Desliga o PWM
 }
 
 void calibra_joystick()
@@ -222,10 +214,8 @@ int main()
 
     if (abs(x_adj) > 200 || abs(y_adj) > 200)
     {
-      pwm_init_gpio_buzzer(BUZZER_A, 1000.0f, 0.5f, true); // 1 kHz com 50% de duty cycle
-    }
-    else
-    {
+      pwm_init_gpio_buzzer(BUZZER_A, 1000.0f, 0.5f, true);
+    } else {
       pwm_init_gpio_buzzer(BUZZER_A, 1000.0f, 0.5f, false);
     }
 
