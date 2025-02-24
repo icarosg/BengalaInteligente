@@ -25,6 +25,8 @@
 #define JOY_X 27
 #define JOY_Y 26
 #define BTN_JOY 22
+#define BTN_A 5
+#define BTN_B 6
 
 #define BUZZER_A 21
 
@@ -68,17 +70,20 @@ void init_hardware(void)
   gpio_pull_up(BTN_JOY);          // Habilita pull-up interno
 
   // configura botao A na GPIO 5 com pull-up e interrupção na borda de descida
-  gpio_init(5);
-  gpio_set_dir(5, GPIO_IN);
-  gpio_pull_up(5);
+  gpio_init(BTN_A);
+  gpio_set_dir(BTN_A, GPIO_IN);
+  gpio_pull_up(BTN_A);
 
   // configura botão B na GPIO 6 com pull-up e interrupção na borda de descida
-  gpio_init(6);
-  gpio_set_dir(6, GPIO_IN);
-  gpio_pull_up(6);
+  gpio_init(BTN_B);
+  gpio_set_dir(BTN_B, GPIO_IN);
+  gpio_pull_up(BTN_B);
 
   // inicializando pwm para led
-  pwm_init_gpio(LED_R);
+  //pwm_init_gpio(LED_R);
+  gpio_init(LED_G);
+  gpio_set_dir(LED_G, GPIO_OUT);
+  gpio_put(LED_G, 0);
 
   // I2C Initialisation. Using it at 400Khz.
   i2c_init(I2C_PORT, 400 * 1000);
@@ -113,8 +118,6 @@ void gpio_irq_handler(uint gpio, uint32_t events)
     if (current_time - last_interrupt_A_time > DEBOUNCE_DELAY_MS)
     {
       last_interrupt_A_time = current_time;
-
-      gpio_put(LED_B, 0);                // desliga o led azul
       gpio_put(LED_G, !gpio_get(LED_G)); // alterna o estado do LED verde
     }
   }
@@ -123,8 +126,7 @@ void gpio_irq_handler(uint gpio, uint32_t events)
     if (current_time - last_interrupt_B_time > DEBOUNCE_DELAY_MS)
     {
       last_interrupt_B_time = current_time;
-      gpio_put(LED_G, 0);                // desliga o led verde
-      gpio_put(LED_B, !gpio_get(LED_B)); // alterna o estado do LED azul
+      printf("Notificação enviada!\n");
     }
   }
 }
@@ -136,6 +138,23 @@ void pwm_init_gpio(uint pin)
   uint slice = pwm_gpio_to_slice_num(pin); // Obtém o slice PWM correspondente
   pwm_set_wrap(slice, 4095);               // Define o valor máximo do PWM
   pwm_set_enabled(slice, true);            // Habilita o PWM
+}
+
+void pwm_init_gpio_buzzer(uint pin, float freq, float duty_cycle, bool ativado)
+{
+  gpio_set_function(pin, GPIO_FUNC_PWM);   // configura o pino como PWM
+  uint slice = pwm_gpio_to_slice_num(pin); // obtém o slice do pino
+  uint chan = pwm_gpio_to_channel(pin);    // obtém o canal PWM
+
+  uint32_t clock_freq = 125000000; // frequência do clock (125 MHz)
+  float divider = 100.0f;          // divisor para reduzir o clock
+  pwm_set_clkdiv(slice, divider);  // define o divisor do clock
+
+  uint32_t wrap = (clock_freq / divider) / freq; // calcula o TOP para a frequência
+  pwm_set_wrap(slice, wrap - 1);
+
+  pwm_set_chan_level(slice, chan, wrap * duty_cycle); // define o duty cycle
+  pwm_set_enabled(slice, ativado);                    // ativa o PWM
 }
 
 void calibra_joystick()
@@ -165,28 +184,12 @@ void atualizarDisplay()
 {
   ssd1306_fill(&ssd, false); // Limpa o display
 
-  // ssd1306_rect(&ssd, 3, 3, 122, 58, cor, !cor);       // desenha um retângulo
+  gpio_get(LED_G) ? ssd1306_draw_string(&ssd, "BUZZER      ON", 8, 26): ssd1306_draw_string(&ssd, "BUZZER     OFF", 8, 26);
+
   ssd1306_draw_string(&ssd, "CEPEDI   TIC37", 8, 10); // desenha uma string
   ssd1306_send_data(&ssd);                            // atualiza o display
 
   sleep_ms(40);
-}
-
-void pwm_init_gpio_buzzer(uint pin, float freq, float duty_cycle, bool ativado)
-{
-  gpio_set_function(pin, GPIO_FUNC_PWM);   // configura o pino como PWM
-  uint slice = pwm_gpio_to_slice_num(pin); // obtém o slice do pino
-  uint chan = pwm_gpio_to_channel(pin);    // obtém o canal PWM
-
-  uint32_t clock_freq = 125000000; // frequência do clock (125 MHz)
-  float divider = 100.0f;          // divisor para reduzir o clock
-  pwm_set_clkdiv(slice, divider);  // define o divisor do clock
-
-  uint32_t wrap = (clock_freq / divider) / freq; // calcula o TOP para a frequência
-  pwm_set_wrap(slice, wrap - 1);
-
-  pwm_set_chan_level(slice, chan, wrap * duty_cycle); // define o duty cycle
-  pwm_set_enabled(slice, ativado);                    // ativa o PWM
 }
 
 int main()
@@ -195,8 +198,8 @@ int main()
   init_hardware();
   calibra_joystick();
 
-  gpio_set_irq_enabled_with_callback(5, GPIO_IRQ_EDGE_FALL, true, &gpio_irq_handler);
-  gpio_set_irq_enabled(6, GPIO_IRQ_EDGE_FALL, true);
+  gpio_set_irq_enabled_with_callback(BTN_A, GPIO_IRQ_EDGE_FALL, true, &gpio_irq_handler);
+  gpio_set_irq_enabled(BTN_B, GPIO_IRQ_EDGE_FALL, true);
 
   // loop principal (as ações dos botões são tratadas via IRQ)
   while (true)
@@ -205,18 +208,24 @@ int main()
     uint16_t x_raw = adc_read();
     adc_select_input(1); // seleciona o ADC para eixo Y. O pino 27 como entrada analógica
     uint16_t y_raw = adc_read();
-    printf("Joystick: X=%d, Y=%d\n", x_raw, y_raw);
+    // printf("Joystick: X=%d, Y=%d\n", x_raw, y_raw);
 
     int16_t x_adj = ajustar_valor_joystick(x_raw, center_x);
     int16_t y_adj = ajustar_valor_joystick(y_raw, center_y);
-    pwm_set_gpio_level(LED_R, abs(y_adj) * 2);
-    pwm_set_gpio_level(LED_R, abs(x_adj) * 2);
+    // pwm_set_gpio_level(LED_R, abs(y_adj) * 2);
+    // pwm_set_gpio_level(LED_R, abs(x_adj) * 2);
 
-    if (abs(x_adj) > 200 || abs(y_adj) > 200)
+    // buzzer se caso estiver ativado o led
+    if (gpio_get(LED_G))
     {
-      pwm_init_gpio_buzzer(BUZZER_A, 1000.0f, 0.5f, true);
-    } else {
-      pwm_init_gpio_buzzer(BUZZER_A, 1000.0f, 0.5f, false);
+      if (abs(x_adj) > 200 || abs(y_adj) > 200)
+      {
+        pwm_init_gpio_buzzer(BUZZER_A, 1000.0f, 0.5f, true);
+      }
+      else
+      {
+        pwm_init_gpio_buzzer(BUZZER_A, 1000.0f, 0.5f, false);
+      }
     }
 
     atualizarDisplay();
