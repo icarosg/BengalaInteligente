@@ -68,9 +68,6 @@ void init_hardware(void)
   gpio_pull_up(BTN_JOY);          // Habilita pull-up interno
 
   // configura o buzzer
-  gpio_init(BUZZER_A);
-  gpio_set_dir(BUZZER_A, GPIO_OUT);
-  gpio_put(BUZZER_A, 0); // Inicialmente desligado
 
   // configura botao A na GPIO 5 com pull-up e interrupção na borda de descida
   gpio_init(5);
@@ -83,7 +80,6 @@ void init_hardware(void)
   gpio_pull_up(6);
 
   // inicializando pwm para led e buzzer
-  pwm_init_gpio(BUZZER_A);
   pwm_init_gpio(LED_R);
 
   // I2C Initialisation. Using it at 400Khz.
@@ -184,10 +180,28 @@ void atualizarDisplay()
   sleep_ms(40);
 }
 
+void pwm_init_gpio_buzzer(uint pin, float freq, float duty_cycle, bool ativado)
+{
+  gpio_set_function(pin, GPIO_FUNC_PWM);   // configura o pino como PWM
+  uint slice = pwm_gpio_to_slice_num(pin); // obtém o slice do pino
+  uint chan = pwm_gpio_to_channel(pin);    // obtém o canal PWM
+
+  uint32_t clock_freq = 125000000; // frequência do clock (125 MHz)
+  float divider = 100.0f;          // divisor para reduzir o clock
+  pwm_set_clkdiv(slice, divider);  // define o divisor do clock
+
+  uint32_t wrap = (clock_freq / divider) / freq; // calcula o TOP para a frequência
+  pwm_set_wrap(slice, wrap - 1);
+
+  pwm_set_chan_level(slice, chan, wrap * duty_cycle); // define o duty cycle
+  pwm_set_enabled(slice, ativado);                    // ativa o PWM
+}
+
 int main()
 {
   stdio_init_all();
   init_hardware();
+  calibra_joystick();
 
   gpio_set_irq_enabled_with_callback(5, GPIO_IRQ_EDGE_FALL, true, &gpio_irq_handler);
   gpio_set_irq_enabled(6, GPIO_IRQ_EDGE_FALL, true);
@@ -206,16 +220,13 @@ int main()
     pwm_set_gpio_level(LED_R, abs(y_adj) * 2);
     pwm_set_gpio_level(LED_R, abs(x_adj) * 2);
 
-    if (x_adj > 200 || y_adj > 200)
+    if (abs(x_adj) > 200 || abs(y_adj) > 200)
     {
-      if (x_adj > y_adj)
-      {
-        pwm_set_gpio_level(BUZZER_A, abs(x_adj) * 2);
-      }
-      else
-      {
-        pwm_set_gpio_level(BUZZER_A, abs(y_adj) * 2);
-      }
+      pwm_init_gpio_buzzer(BUZZER_A, 1000.0f, 0.5f, true); // 1 kHz com 50% de duty cycle
+    }
+    else
+    {
+      pwm_init_gpio_buzzer(BUZZER_A, 1000.0f, 0.5f, false);
     }
 
     atualizarDisplay();
