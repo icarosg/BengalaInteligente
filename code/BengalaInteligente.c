@@ -22,6 +22,11 @@
 #define I2C_SCL 15
 #define endereco 0x3C
 
+#define UART_ID uart0    // seleciona a UART0
+#define BAUD_RATE 115200 // define a taxa de transmissão
+#define UART_TX_PIN 0    // pino GPIO usado para TX
+#define UART_RX_PIN 1    // pino GPIO usado para RX
+
 #define JOY_X 27
 #define JOY_Y 26
 #define BTN_JOY 22
@@ -46,6 +51,7 @@ volatile uint32_t last_interrupt_A_time = 0;
 volatile uint32_t last_interrupt_B_time = 0;
 uint16_t center_x; // posição central do eixo X do joystick
 uint16_t center_y; // posição central do eixo Y do joystick
+int segundos = 0;
 
 PIO np_pio;
 uint sm;
@@ -80,10 +86,18 @@ void init_hardware(void)
   gpio_pull_up(BTN_B);
 
   // inicializando pwm para led
-  //pwm_init_gpio(LED_R);
+  // pwm_init_gpio(LED_R);
   gpio_init(LED_G);
   gpio_set_dir(LED_G, GPIO_OUT);
   gpio_put(LED_G, 0);
+
+  // inicializar uart
+  uart_init(UART_ID, BAUD_RATE);
+  gpio_set_function(UART_TX_PIN, GPIO_FUNC_UART);
+  gpio_set_function(UART_RX_PIN, GPIO_FUNC_UART);
+  uart_set_hw_flow(UART_ID, false, false);
+  uart_set_format(UART_ID, 8, 1, UART_PARITY_NONE);
+  uart_set_fifo_enabled(UART_ID, true);
 
   // I2C Initialisation. Using it at 400Khz.
   i2c_init(I2C_PORT, 400 * 1000);
@@ -129,6 +143,12 @@ void gpio_irq_handler(uint gpio, uint32_t events)
       printf("Notificação enviada!\n");
     }
   }
+}
+
+bool repeating_timer_callback(struct repeating_timer *t)
+{
+  segundos += 1;
+  return true;
 }
 
 // inicializa um pino GPIO como saída PWM
@@ -184,13 +204,54 @@ void atualizarDisplay()
 {
   ssd1306_fill(&ssd, false); // Limpa o display
 
-  gpio_get(LED_G) ? ssd1306_draw_string(&ssd, "BUZZER      ON", 8, 26): ssd1306_draw_string(&ssd, "BUZZER     OFF", 8, 26);
+  gpio_get(LED_G) ? ssd1306_draw_string(&ssd, "BUZZER      ON", 8, 26) : ssd1306_draw_string(&ssd, "BUZZER     OFF", 8, 26);
+
+  // if (texto != NULL && texto[0] != '\0')
+  // {
+  //   ssd1306_draw_string(&ssd, texto, 8, 42);
+  // }
 
   ssd1306_draw_string(&ssd, "CEPEDI   TIC37", 8, 10); // desenha uma string
   ssd1306_send_data(&ssd);                            // atualiza o display
 
   sleep_ms(40);
 }
+
+void dadosUART()
+{
+  char buffer[256];
+  snprintf(buffer, sizeof(buffer),
+           "{\"tempoDecorrido\":%lu}",
+           segundos);
+
+  printf("%s", buffer);
+  uart_puts(UART_ID, buffer);
+  sleep_ms(100);
+}
+
+// void lerDadosUART()
+// {
+//   static char buffer[256];
+//   static int index = 0;
+
+//   while (uart_is_readable(UART_ID))
+//   {
+//     char c = uart_getc(UART_ID);
+//     printf("Caractere recebido: %c\n", c);
+
+//     if (c == '\n' || index >= sizeof(buffer) - 1)
+//     {
+//       buffer[index] = '\0';
+//       printf("String recebida: %s\n", buffer);
+//       atualizarDisplay(buffer);
+//       index = 0;
+//     }
+//     else
+//     {
+//       buffer[index++] = c;
+//     }
+//   }
+// }
 
 int main()
 {
@@ -200,6 +261,9 @@ int main()
 
   gpio_set_irq_enabled_with_callback(BTN_A, GPIO_IRQ_EDGE_FALL, true, &gpio_irq_handler);
   gpio_set_irq_enabled(BTN_B, GPIO_IRQ_EDGE_FALL, true);
+
+  struct repeating_timer timer;
+  add_repeating_timer_ms(-1000, repeating_timer_callback, NULL, &timer);
 
   // loop principal (as ações dos botões são tratadas via IRQ)
   while (true)
@@ -229,6 +293,8 @@ int main()
     }
 
     atualizarDisplay();
+    dadosUART();
+    //lerDadosUART();
     sleep_ms(100);
   }
 }
