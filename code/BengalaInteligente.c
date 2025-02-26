@@ -44,14 +44,22 @@ void calibra_joystick();
 int16_t ajustar_valor_joystick(int16_t raw, int16_t center);
 static void gpio_irq_handler(uint gpio, uint32_t events);
 void atualizarDisplay(void);
+void init_leds(void);
+void clear_leds(void);
+void write_leds(void);
+bool exibirSOS_callback(struct repeating_timer *t);
 
 // variáveis globais
+struct repeating_timer timer1;
+struct repeating_timer timer2;
 ssd1306_t ssd; // inicializa a estrutura do display
 volatile uint32_t last_interrupt_A_time = 0;
 volatile uint32_t last_interrupt_B_time = 0;
 uint16_t center_x; // posição central do eixo X do joystick
 uint16_t center_y; // posição central do eixo Y do joystick
 int segundos = 0;
+bool notificar = false;
+bool estadoSOS = false;
 
 PIO np_pio;
 uint sm;
@@ -64,6 +72,21 @@ npLED_t leds[LED_COUNT];
 
 // variável para controlar o debounce
 absolute_time_t last_press_time;
+
+// matriz para acender matriz com SOS
+int matrizSoS[2][25] = {
+    {0, 1, 1, 1, 0,
+     0, 1, 0, 1, 0,
+     0, 1, 0, 1, 0,
+     0, 1, 0, 1, 0,
+     0, 1, 1, 1, 0}, // O
+
+    {0, 1, 1, 1, 0,
+     0, 0, 0, 1, 0,
+     0, 1, 1, 1, 0,
+     0, 1, 0, 0, 0,
+     0, 1, 1, 1, 0}, // S
+};
 
 void init_hardware(void)
 {
@@ -95,9 +118,10 @@ void init_hardware(void)
   uart_init(UART_ID, BAUD_RATE);
   gpio_set_function(UART_TX_PIN, GPIO_FUNC_UART);
   gpio_set_function(UART_RX_PIN, GPIO_FUNC_UART);
-  uart_set_hw_flow(UART_ID, false, false);
-  uart_set_format(UART_ID, 8, 1, UART_PARITY_NONE);
-  uart_set_fifo_enabled(UART_ID, true);
+
+  init_leds();
+  clear_leds();
+  write_leds();
 
   // I2C Initialisation. Using it at 400Khz.
   i2c_init(I2C_PORT, 400 * 1000);
@@ -117,6 +141,67 @@ void init_hardware(void)
   last_press_time = get_absolute_time(); // inicializa o tempo do último botão pressionado
 
   printf("RP2040 inicializado.\n");
+}
+
+void init_leds(void)
+{
+  uint offset = pio_add_program(pio0, &ws2818b_program);
+  np_pio = pio0;
+  sm = pio_claim_unused_sm(np_pio, true);
+  ws2818b_program_init(np_pio, sm, offset, LED_PIN, 800000.f);
+  for (int i = 0; i < LED_COUNT; i++)
+  {
+    leds[i].R = leds[i].G = leds[i].B = 0;
+  }
+}
+
+void set_led(int index, uint8_t r, uint8_t g, uint8_t b)
+{
+  if (index < LED_COUNT)
+  {
+    leds[index].R = r;
+    leds[index].G = g;
+    leds[index].B = b;
+  }
+}
+
+void clear_leds(void)
+{
+  for (int i = 0; i < LED_COUNT; i++)
+  {
+    set_led(i, 0, 0, 0);
+  }
+}
+
+void write_leds(void)
+{
+  for (int i = 0; i < LED_COUNT; i++)
+  {
+    pio_sm_put_blocking(np_pio, sm, leds[i].G);
+    pio_sm_put_blocking(np_pio, sm, leds[i].R);
+    pio_sm_put_blocking(np_pio, sm, leds[i].B);
+  }
+}
+
+bool exibirSOS_callback(struct repeating_timer *t)
+{
+  clear_leds();
+  estadoSOS = !estadoSOS; // alterna entre 0 e 1
+
+  if (notificar)
+  {
+    for (int incremento = 0; incremento < 25; incremento++)
+    {
+      if (matrizSoS[estadoSOS][incremento] == 1)
+      {
+        set_led(incremento, LED_BRIGHTNESS, LED_BRIGHTNESS / 2, LED_BRIGHTNESS / 3);
+      }
+    }
+  }
+
+  write_leds();
+
+  return true;
 }
 
 /**
@@ -140,6 +225,7 @@ void gpio_irq_handler(uint gpio, uint32_t events)
     if (current_time - last_interrupt_B_time > DEBOUNCE_DELAY_MS)
     {
       last_interrupt_B_time = current_time;
+      notificar = !notificar;
       printf("Notificação enviada!\n");
     }
   }
@@ -221,37 +307,17 @@ void dadosUART()
 {
   char buffer[256];
   snprintf(buffer, sizeof(buffer),
-           "{\"tempoDecorrido\":%lu}",
-           segundos);
+           "{"
+           "\"tempoDecorrido\":%lu,"
+           "\"notificar\":%u"
+           "}\n",
+           segundos,
+           notificar);
 
   printf("%s", buffer);
   uart_puts(UART_ID, buffer);
   sleep_ms(100);
 }
-
-// void lerDadosUART()
-// {
-//   static char buffer[256];
-//   static int index = 0;
-
-//   while (uart_is_readable(UART_ID))
-//   {
-//     char c = uart_getc(UART_ID);
-//     printf("Caractere recebido: %c\n", c);
-
-//     if (c == '\n' || index >= sizeof(buffer) - 1)
-//     {
-//       buffer[index] = '\0';
-//       printf("String recebida: %s\n", buffer);
-//       atualizarDisplay(buffer);
-//       index = 0;
-//     }
-//     else
-//     {
-//       buffer[index++] = c;
-//     }
-//   }
-// }
 
 int main()
 {
@@ -262,8 +328,8 @@ int main()
   gpio_set_irq_enabled_with_callback(BTN_A, GPIO_IRQ_EDGE_FALL, true, &gpio_irq_handler);
   gpio_set_irq_enabled(BTN_B, GPIO_IRQ_EDGE_FALL, true);
 
-  struct repeating_timer timer;
-  add_repeating_timer_ms(-1000, repeating_timer_callback, NULL, &timer);
+  add_repeating_timer_ms(-1000, repeating_timer_callback, NULL, &timer1);
+  add_repeating_timer_ms(-2000, exibirSOS_callback, NULL, &timer2);
 
   // loop principal (as ações dos botões são tratadas via IRQ)
   while (true)
@@ -294,7 +360,6 @@ int main()
 
     atualizarDisplay();
     dadosUART();
-    //lerDadosUART();
     sleep_ms(100);
   }
 }
