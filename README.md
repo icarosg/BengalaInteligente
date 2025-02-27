@@ -27,15 +27,17 @@ O projeto está organizado em duas pastas principais:
    ```bash
    cd smart-product
    
-2. Inicie o servidor
+2. Inicie o servidor   
+Lembrando que a depender do sistema operacional que esteja acessando, é necessário mudar o path no arquivo server.js, para o destino o qual o usb da placa esteja ligada.
+Atualmente está no caminho /dev/ttyACM0. Mude para a rota correta, a depender do seu caso.
    ```bash
    node server.js
    
-3. Execute a interface web:
+4. Execute a interface web:
    ```bash
    npm run dev
 
-4. Acesse a interface no navegador utilizando o endereço localhost, conforme o parâmetro definido no servidor.
+5. Acesse a interface no navegador utilizando o endereço localhost, conforme o parâmetro definido no servidor.
 
 ## **Demonstração**
 
